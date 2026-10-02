@@ -1,90 +1,206 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from "react";
 
-export const CustomCursor: React.FC = () => {
-  const [pos, setPos] = useState({ x: -100, y: -100 });
-  const [trailPos, setTrailPos] = useState({ x: -100, y: -100 });
-  const [isHovered, setIsHovered] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
+interface Point {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  radius: number;
+  color: string;
+}
+
+const COLORS = [
+  "#FFC83D", // Gold (Brand primary)
+  "#FF0080", // Vibrant Pink
+  "#7928CA", // Royal Purple
+  "#0070F3", // Blue
+  "#00DFD8", // Cyan
+  "#F5A100", // Amber
+  "#FFD700", // Golden Yellow
+];
+
+export const LiquidCursor: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pointsRef = useRef<Point[]>([]);
+  const mouseRef = useRef({ x: 0, y: 0, lastX: 0, lastY: 0, moved: false, isTouch: false });
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Disable on touch devices
-    if (window.matchMedia('(pointer: coarse)').matches) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener("resize", resize);
+    resize();
+
+    // Mouse movement
     const handleMouseMove = (e: MouseEvent) => {
-      setPos({ x: e.clientX, y: e.clientY });
-      if (!isVisible) setIsVisible(true);
+      mouseRef.current.x = e.clientX;
+      mouseRef.current.y = e.clientY;
+      mouseRef.current.moved = true;
+      mouseRef.current.isTouch = false;
+    };
 
-      // Check if hovering interactive element
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.closest('button') ||
-        target?.closest('a') ||
-        target?.closest('[role="button"]') ||
-        target?.closest('.interactive') ||
-        target?.tagName === 'INPUT'
-      ) {
-        setIsHovered(true);
-      } else {
-        setIsHovered(false);
+    // Touch events for phones and tablets
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        mouseRef.current.x = touch.clientX;
+        mouseRef.current.y = touch.clientY;
+        mouseRef.current.lastX = touch.clientX;
+        mouseRef.current.lastY = touch.clientY;
+        mouseRef.current.moved = true;
+        mouseRef.current.isTouch = true;
+
+        // Emit initial droplet burst on tap
+        for (let i = 0; i < 4; i++) {
+          addPoint(touch.clientX, touch.clientY, 1.2);
+        }
       }
     };
 
-    const handleMouseLeave = () => setIsVisible(false);
-
-    window.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseleave', handleMouseLeave);
-
-    // Smooth spring trailing ring
-    let animationFrameId: number;
-    const updateTrail = () => {
-      setTrailPos((prev) => ({
-        x: prev.x + (pos.x - prev.x) * 0.18,
-        y: prev.y + (pos.y - prev.y) * 0.18,
-      }));
-      animationFrameId = requestAnimationFrame(updateTrail);
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        mouseRef.current.x = touch.clientX;
+        mouseRef.current.y = touch.clientY;
+        mouseRef.current.moved = true;
+        mouseRef.current.isTouch = true;
+      }
     };
-    animationFrameId = requestAnimationFrame(updateTrail);
+
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+
+    const addPoint = (x: number, y: number, speedMultiplier = 1) => {
+      if (pointsRef.current.length > 120) return; // Prevent overcrowding & keep 60fps on mobile
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = (Math.random() * 0.8 + 0.2) * speedMultiplier;
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+
+      pointsRef.current.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1,
+        maxLife: 1,
+        radius: Math.random() * 18 + 10, // Radius between 10 and 28
+        color,
+      });
+    };
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Add new points if mouse/finger moved
+      if (mouseRef.current.moved) {
+        const dist = Math.hypot(
+          mouseRef.current.x - mouseRef.current.lastX,
+          mouseRef.current.y - mouseRef.current.lastY
+        );
+
+        if (dist > 0) {
+          const steps = Math.min(dist, 16);
+          for (let i = 0; i < steps; i += 2) {
+            const t = i / steps;
+            const x =
+              mouseRef.current.lastX +
+              (mouseRef.current.x - mouseRef.current.lastX) * t;
+            const y =
+              mouseRef.current.lastY +
+              (mouseRef.current.y - mouseRef.current.lastY) * t;
+
+            if (Math.random() > 0.4) {
+              addPoint(x, y, mouseRef.current.isTouch ? 1.4 : 1);
+            }
+          }
+        }
+
+        mouseRef.current.lastX = mouseRef.current.x;
+        mouseRef.current.lastY = mouseRef.current.y;
+        mouseRef.current.moved = false;
+      } else {
+        mouseRef.current.lastX = mouseRef.current.x;
+        mouseRef.current.lastY = mouseRef.current.y;
+      }
+
+      // Update and draw liquid droplets
+      for (let i = pointsRef.current.length - 1; i >= 0; i--) {
+        const p = pointsRef.current[i];
+
+        p.life -= 0.015; // Smooth decay rate
+        p.x += p.vx;
+        p.y += p.vy;
+        p.radius *= 0.985; // Organic shrinkage
+
+        if (p.life <= 0 || p.radius < 0.5) {
+          pointsRef.current.splice(i, 1);
+          continue;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      rafRef.current = requestAnimationFrame(animate);
+    };
+
+    animate();
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseleave', handleMouseLeave);
-      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchmove", handleTouchMove);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [pos.x, pos.y, isVisible]);
-
-  if (!isVisible) return null;
+  }, []);
 
   return (
-    <>
-      {/* Central Yellow Dot */}
-      <div
-        className="fixed top-0 left-0 pointer-events-none z-[9999] -translate-x-1/2 -translate-y-1/2 transition-transform duration-75"
-        style={{
-          transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`,
-        }}
-      >
-        <div
-          className={`rounded-full bg-yellow-400 shadow-glow-yellow transition-all duration-150 ${
-            isHovered ? 'w-3 h-3 bg-amber-500 scale-125' : 'w-2 h-2'
-          }`}
-        />
-      </div>
+    <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+      {/* SVG Filter for Gooey Liquid Fluid Merging */}
+      <svg className="hidden" aria-hidden="true">
+        <defs>
+          <filter id="liquid-cursor-filter">
+            <feGaussianBlur
+              in="SourceGraphic"
+              stdDeviation="10"
+              result="blur"
+            />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7"
+              result="goo"
+            />
+            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+          </filter>
+        </defs>
+      </svg>
 
-      {/* Trailing Outer Ring */}
-      <div
-        className="fixed top-0 left-0 pointer-events-none z-[9998] -translate-x-1/2 -translate-y-1/2"
-        style={{
-          transform: `translate3d(${trailPos.x}px, ${trailPos.y}px, 0)`,
-        }}
-      >
-        <div
-          className={`rounded-full border border-yellow-400/80 transition-all duration-300 ${
-            isHovered
-              ? 'w-12 h-12 bg-yellow-400/15 scale-110 border-yellow-300'
-              : 'w-7 h-7 bg-transparent'
-          }`}
-        />
-      </div>
-    </>
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full block"
+        style={{ filter: "url(#liquid-cursor-filter)" }}
+      />
+    </div>
   );
 };
+
+// Also export as CustomCursor for seamless integration
+export const CustomCursor = LiquidCursor;
